@@ -2,8 +2,12 @@ import re
 
 """
     email_reply_parser is a python library port of GitHub's Email Reply Parser.
+    This fork adds support for:
+        - detecting forwarded message
+        - multilingual reply header formats
 
-    For more information, visit https://github.com/zapier/email-reply-parser
+    For more information, visit https://github.com/kpanayotova/email-reply-parser
+    (forked from https://github.com/zapier/email-reply-parser)
 """
 
 
@@ -35,11 +39,35 @@ class EmailReplyParser(object):
 class EmailMessage(object):
     """ An email message represents a parsed email body.
     """
-
     SIG_REGEX = r'(--|__|-\w)|(^Sent from my (\w+\s*){1,3})'
-    QUOTE_HDR_REGEX = r'^:etorw.*nO'
-    MULTI_QUOTE_HDR_REGEX = r'(On\s.*?wrote:)'
+
+    QUOTE_HDR_REGEXS = [
+        r'^:etorw.*nO',
+        r'^:.*beirhcs.*mA',            # de
+        r'^:\s*tirc\xa9\xc3.*eL',      # fr
+                                       # TODO es
+    ]
+    MULTI_QUOTE_HDR_REGEXS = [
+        r'((-+\s*)?On\s.*?wrote:)',
+        r'((-+\s*)?Am\s.*?schrieb.*:)',        # de
+        r'((-+\s*)?Le\s.*?\xc3\xa9crit\s*:)',  # fr
+                                               # TODO es
+    ]
     QUOTED_REGEX = r'(>+)'
+    FORWARD_MESSAGES = [
+        # apple mail forward
+        'Begin forwarded message',
+
+        # gmail/evolution forward
+        'Forwarded [mM]essage',
+
+        # outlook
+        'Original [mM]essage',
+
+        #TODO add translations
+    ]
+    FORWARD_REGEXS = ['^---+ ?%s.* ?---+$' % p for p in FORWARD_MESSAGES] \
+                   + ['^%s:$' % p for p in FORWARD_MESSAGES]
 
     def __init__(self, text):
         self.fragments = []
@@ -56,9 +84,9 @@ class EmailMessage(object):
 
         self.found_visible = False
 
-        is_multi_quote_header = re.search(self.MULTI_QUOTE_HDR_REGEX, self.text, re.MULTILINE | re.DOTALL)
+        is_multi_quote_header, regex = self.has_quote_header(self.text)
         if is_multi_quote_header:
-            expr = re.compile(self.MULTI_QUOTE_HDR_REGEX, flags=re.DOTALL)
+            expr = re.compile(regex, flags=re.DOTALL)
             self.text = expr.sub(
                 is_multi_quote_header.groups()[0].replace('\n', ''),
                 self.text)
@@ -81,7 +109,7 @@ class EmailMessage(object):
         """
         reply = []
         for f in self.fragments:
-            if not (f.hidden or f.quoted):
+            if not (f.hidden or f.quoted or f.forwarded):
                 reply.append(f.content)
         return '\n'.join(reply)
 
@@ -91,34 +119,62 @@ class EmailMessage(object):
             line - a row of text from an email message
         """
 
-        line.strip('\n')
+        line = line.strip()
+
+        is_forward = self.is_forward_header(line) is not None
+        if is_forward:
+            self._finish_fragment()
+            for fragment in self.fragments:
+                fragment.forwarded = True
+            return
 
         if re.match(self.SIG_REGEX, line):
             line.lstrip()
 
         is_quoted = re.match(self.QUOTED_REGEX, line) != None
 
-        if self.fragment and len(line.strip()) == 0:
+        if self.fragment and len(line) == 0:
             if re.match(self.SIG_REGEX, self.fragment.lines[-1]):
                 self.fragment.signature = True
                 self._finish_fragment()
 
         if self.fragment and ((self.fragment.quoted == is_quoted)
-            or (self.fragment.quoted and (self.quote_header(line) or len(line.strip()) == 0))):
+            or (self.fragment.quoted and (self.is_quote_header(line) or len(line.strip()) == 0))):
 
             self.fragment.lines.append(line)
+
         else:
             self._finish_fragment()
-            self.fragment = Fragment(is_quoted, line)
+            self.fragment = Fragment(is_quoted, is_forward, line)
 
-    def quote_header(self, line):
-        """ Determines whether line is part of a quoted area
+    def is_quote_header(self, line):
+        return self._match_any(self.QUOTE_HDR_REGEXS, line[::-1])[0] != None
 
-            line - a row of the email message
-
-            Returns True or False
+    def has_quote_header(self, text):
+        """ Check if message contains reply header
         """
-        return re.match(self.QUOTE_HDR_REGEX, line[::-1]) != None
+        return self._match_any(self.MULTI_QUOTE_HDR_REGEXS, text, re.MULTILINE | re.DOTALL, True)
+
+    def is_forward_header(self, line):
+        """ Check if this line is a forward header
+        """
+        return self._match_any(self.FORWARD_REGEXS, line)[0]
+
+    def _match_any(self, regexs, text, options=None, search=False):
+        """ Matches any of the list of regexs
+            Returns a tuple: (match, regex_matched)
+        """
+        match = None
+        regex = None
+        operator = 'search' if search else 'match'
+        for regex in regexs:
+            if options is not None:
+                match = getattr(re, operator)(regex, text, options)
+            else:
+                match = getattr(re, operator)(regex, text)
+            if match:
+                break
+        return match, regex
 
     def _finish_fragment(self):
         """ Creates fragment
@@ -143,10 +199,11 @@ class Fragment(object):
         an Email Message, labeling each part.
     """
 
-    def __init__(self, quoted, first_line):
+    def __init__(self, quoted, forwarded, first_line):
         self.signature = False
         self.hidden = False
         self.quoted = quoted
+        self.forwarded = forwarded
         self._content = None
         self.lines = [first_line]
 
@@ -161,3 +218,4 @@ class Fragment(object):
     @property
     def content(self):
         return self._content
+

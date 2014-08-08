@@ -101,6 +101,14 @@ class EmailMessageTest(unittest.TestCase):
         message = self.get_email('email_1_2')
         self.assertTrue("You can list the keys for the bucket" in message.reply)
 
+    def test_forwarded(self):
+        message = self.get_email('email_1_8')
+        self.assertEqual(3, len(message.fragments))
+        self.assertEqual(
+            [False, True, True],
+            [f.forwarded for f in message.fragments]
+        )
+
     def test_sent_from_iphone(self):
         with open('test/emails/email_iPhone.txt') as email:
             self.assertTrue("Sent from my iPhone" not in EmailReplyParser.parse_reply(email.read()))

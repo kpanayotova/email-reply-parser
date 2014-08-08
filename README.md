@@ -1,6 +1,10 @@
 # Email Reply Parser for Python
 A port of GitHub's Email Reply Parser library, by the fine folks at [Zapier](https://zapier.com/).
 
+This fork adds the following:
+    - Mark fragments that are part of a forwarded message (anything below the forwarded message header)
+    - Add basic support for german/french reply headers
+
 ## Summary
 
 Email Reply Parser makes it easy to grab *only* the last reply to an on-going email thread.
